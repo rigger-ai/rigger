@@ -1,0 +1,70 @@
+[project]
+name = "rigger"
+version = "0.0.1"
+description = "A declarative agent harness framework"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "Apache-2.0"
+authors = [{ name = "Ariel Arevalo", email = "ariel@rigger.ai" }]
+dependencies = [
+    "claude-agent-sdk>=0.1.44",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://rigger-ai.github.io/rigger/"
+Documentation = "https://rigger-ai.github.io/rigger/"
+Repository = "https://github.com/rigger-ai/rigger"
+Issues = "https://github.com/rigger-ai/rigger/issues"
+Changelog = "https://github.com/rigger-ai/rigger/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.7",
+    "ty>=0.0.1a7",
+    "pytest>=8.3.5",
+    "pytest-cov>=6.0.0",
+    "pytest-asyncio>=0.25.2",
+]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+    "mkdocs-gen-files>=0.5",
+    "mkdocs-literate-nav>=0.6",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT", "ANN", "S", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "D", "ANN", "S603", "S607", "PT019"]
+"src/rigger/backends/**/*.py" = ["S603", "S607"]
+"src/rigger/workspace/**/*.py" = ["S603", "S607"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["rigger"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
