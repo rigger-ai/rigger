@@ -1,0 +1,14 @@
+backend:
+  type: claude_code
+
+task_source:
+  type: file_list
+  path: tasks.json
+
+verifiers:
+  - type: test_suite
+    command: ["bash", "-c", "test -f hello.txt"]
+
+run:
+  max_epochs: 3
+  max_retries: 2
