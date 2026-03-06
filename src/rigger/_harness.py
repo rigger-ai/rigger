@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rigger._lock import acquire_lock, release_lock
 from rigger._merge import merge_metadata
 from rigger._protocols import (
     AgentBackend,
@@ -32,9 +33,12 @@ from rigger._protocols import (
 from rigger._provisioner import ContextProvisioner
 from rigger._schema import (
     read_state,
-    write_constraints,
     write_current_task,
+    write_entropy_tasks,
     write_state,
+)
+from rigger._schema import (
+    write_constraints as _schema_write_constraints,
 )
 from rigger._types import (
     Action,
@@ -43,6 +47,7 @@ from rigger._types import (
     ProvisionResult,
     Task,
     TaskResult,
+    VerifyAction,
     VerifyResult,
 )
 
@@ -88,6 +93,9 @@ class Callbacks:
     on_entropy_scan: Callable[[list[Task]], Action | None] = field(
         default_factory=lambda: lambda tasks: None
     )
+    on_escalation: Callable[[Task, list[VerifyResult]], None] = field(
+        default_factory=lambda: lambda task, results: None
+    )
 
 
 # ─── Harness ─────────────────────────────────────────────────
@@ -111,6 +119,7 @@ class Harness:
         state_store: StateStore | None = None,
         entropy_detectors: list[EntropyDetector] | None = None,
         workspace_manager: WorkspaceManager | None = None,
+        inject_entropy_tasks: bool = True,
     ) -> None:
         self.project_root = project_root
         self.backend = backend
@@ -121,6 +130,7 @@ class Harness:
         self.state_store = state_store
         self.entropy_detectors: list[EntropyDetector] = list(entropy_detectors or [])
         self.workspace_manager = workspace_manager
+        self.inject_entropy_tasks = inject_entropy_tasks
         self._instance_id = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
     # ─── Step methods ────────────────────────────────────────
@@ -162,6 +172,23 @@ class Harness:
         if self.state_store is not None:
             self.state_store.save(self.project_root, state)
 
+    def harvest(self, result: TaskResult, project_root: Path) -> TaskResult:
+        """Post-process a dispatch result before verification.
+
+        Default implementation is passthrough. Override or replace for
+        custom artifact collection, metric computation, or result enrichment.
+
+        Called by ``run()`` and ``run_once()`` between dispatch and verify.
+
+        Args:
+            result: TaskResult from dispatch.
+            project_root: The project directory.
+
+        Returns:
+            Possibly-modified TaskResult.
+        """
+        return result
+
     def scan_entropy(self) -> list[Task]:
         """Call each EntropyDetector.scan() and flatten results."""
         tasks: list[Task] = []
@@ -169,10 +196,47 @@ class Harness:
             tasks.extend(detector.scan(self.project_root))
         return tasks
 
-    def _write_constraint_config(self, results: list[VerifyResult]) -> None:
-        """Merge constraint metadata and write/delete .harness/constraints.json."""
-        merged = merge_metadata(results)
-        write_constraints(self.project_root, merged)
+    def write_constraints(
+        self,
+        project_root: Path | None = None,
+        *,
+        results: list[VerifyResult] | None = None,
+    ) -> None:
+        """Merge constraint metadata and write/delete .harness/constraints.json.
+
+        Public step method for custom loops. If *results* are not provided,
+        calls ``check_constraints()`` to obtain them.
+
+        Args:
+            project_root: Target directory (defaults to ``self.project_root``).
+            results: Pre-computed constraint results. When ``None``,
+                ``check_constraints()`` is called automatically.
+        """
+        root = project_root or self.project_root
+        if results is not None:
+            constraint_results = results
+        else:
+            constraint_results = self.check_constraints()
+        merged = merge_metadata(constraint_results)
+        _schema_write_constraints(root, merged)
+
+    @staticmethod
+    def _resolve_verify_action(verify_results: list[VerifyResult]) -> VerifyAction:
+        """Determine aggregate action from multiple verification results.
+
+        Precedence: BLOCK > ESCALATE > RETRY > ACCEPT.
+        No results returns ACCEPT.
+        """
+        if not verify_results:
+            return VerifyAction.ACCEPT
+        actions = {vr.action for vr in verify_results}
+        if VerifyAction.BLOCK in actions:
+            return VerifyAction.BLOCK
+        if VerifyAction.ESCALATE in actions:
+            return VerifyAction.ESCALATE
+        if VerifyAction.RETRY in actions:
+            return VerifyAction.RETRY
+        return VerifyAction.ACCEPT
 
     # ─── Parallel dispatch ────────────────────────────────────
 
@@ -353,21 +417,50 @@ class Harness:
     async def run(
         self,
         max_epochs: int = 1,
+        max_retries: int = 3,
         stop_when: Callable[[EpochState], bool] = all_tasks_done,
         callbacks: Callbacks | None = None,
+        *,
+        force_lock: bool = False,
     ) -> EpochState:
         """Execute the canonical epoch loop.
 
-        Single task per epoch. Returns final EpochState.
+        Single task per epoch with VerifyAction routing. Returns final
+        EpochState. Acquires ``.harness/harness.lock`` for the duration
+        of the run.
 
         Args:
             max_epochs: Maximum number of epochs to execute.
+            max_retries: Maximum retries per task on RETRY action.
             stop_when: Predicate checked after each epoch; breaks if True.
             callbacks: Optional hook points for loop control.
+            force_lock: Override an existing lock file.
 
         Returns:
             Final EpochState after loop terminates.
+
+        Raises:
+            HarnessAlreadyRunning: If another instance holds the lock.
         """
+        lock_info = acquire_lock(self.project_root, force=force_lock)
+        try:
+            return await self._run_inner(
+                max_epochs=max_epochs,
+                max_retries=max_retries,
+                stop_when=stop_when,
+                callbacks=callbacks,
+            )
+        finally:
+            release_lock(self.project_root, lock_info)
+
+    async def _run_inner(
+        self,
+        max_epochs: int,
+        max_retries: int,
+        stop_when: Callable[[EpochState], bool],
+        callbacks: Callbacks | None,
+    ) -> EpochState:
+        """Inner loop implementation for ``run()``."""
         cb = callbacks or Callbacks()
         epoch_state = EpochState()
 
@@ -411,42 +504,91 @@ class Harness:
                 continue
 
             # WRITE_CONFIG
-            self._write_constraint_config(pre_results)
+            self.write_constraints(results=pre_results)
 
-            # DISPATCH
-            result = await self.dispatch(task)
+            # DISPATCH + VERIFY (with retry loop)
+            retries = 0
+            loop_halted = False
 
-            action = cb.on_task_complete(result)
-            if action is Action.HALT:
-                break
+            while True:
+                result = await self.dispatch(task)
+                result = self.harvest(result, self.project_root)
 
-            # CHECK_POST
-            post_results = self.check_constraints()
-            for r in post_results:
-                if not r.passed:
+                action = cb.on_task_complete(result)
+                if action is Action.HALT:
+                    loop_halted = True
+                    break
+
+                # CHECK_POST
+                post_results = self.check_constraints()
+                for r in post_results:
+                    if not r.passed:
+                        logger.info(
+                            "Epoch %d: post-dispatch constraint violation: %s",
+                            epoch,
+                            r.message,
+                        )
+
+                # VERIFY
+                verify_results = self.verify(result)
+                verify_action = self._resolve_verify_action(verify_results)
+
+                if verify_results and verify_action is VerifyAction.ACCEPT:
+                    result.status = "verified"
+                elif verify_results and verify_action is not VerifyAction.ACCEPT:
+                    result.status = "verification_failed"
+
+                action = cb.on_verify_complete(result, verify_results)
+                if action is Action.HALT:
+                    loop_halted = True
+                    break
+
+                # Route on VerifyAction
+                if verify_action is VerifyAction.ACCEPT:
+                    self.task_source.mark_complete(task.id, result)
+                    epoch_state.completed_tasks.append(task.id)
+                    if task.id in epoch_state.pending_tasks:
+                        epoch_state.pending_tasks.remove(task.id)
+                    break
+
+                if verify_action is VerifyAction.RETRY:
+                    retries += 1
+                    if retries > max_retries:
+                        logger.warning(
+                            "Task %s: max retries (%d) exhausted — blocking",
+                            task.id,
+                            max_retries,
+                        )
+                        epoch_state.halted = True
+                        epoch_state.halt_reason = "max_retries_exhausted"
+                        loop_halted = True
+                        break
                     logger.info(
-                        "Epoch %d: post-dispatch constraint violation: %s",
-                        epoch,
-                        r.message,
+                        "Task %s: retrying (%d/%d)",
+                        task.id,
+                        retries,
+                        max_retries,
                     )
+                    continue
 
-            # VERIFY
-            verify_results = self.verify(result)
-            if verify_results and all(vr.passed for vr in verify_results):
-                result.status = "verified"
-            elif verify_results and any(not vr.passed for vr in verify_results):
-                result.status = "verification_failed"
+                if verify_action is VerifyAction.BLOCK:
+                    epoch_state.halted = True
+                    epoch_state.halt_reason = "blocked"
+                    loop_halted = True
+                    break
 
-            action = cb.on_verify_complete(result, verify_results)
-            if action is Action.HALT:
+                if verify_action is VerifyAction.ESCALATE:
+                    epoch_state.halted = True
+                    epoch_state.halt_reason = "escalation"
+                    cb.on_escalation(task, verify_results)
+                    loop_halted = True
+                    break
+
+            if loop_halted:
+                self.persist(epoch_state)
                 break
-
-            self.task_source.mark_complete(task.id, result)
 
             # PERSIST
-            epoch_state.completed_tasks.append(task.id)
-            if task.id in epoch_state.pending_tasks:
-                epoch_state.pending_tasks.remove(task.id)
             self.persist(epoch_state)
 
             action = cb.on_epoch_end(epoch, epoch_state)
@@ -459,6 +601,9 @@ class Harness:
             action = cb.on_entropy_scan(entropy_tasks)
             if action is Action.HALT:
                 break
+
+            if self.inject_entropy_tasks and entropy_tasks:
+                write_entropy_tasks(self.project_root, entropy_tasks)
 
             # DECIDE
             epoch_state.pending_tasks = [
@@ -475,16 +620,36 @@ class Harness:
         self,
         task: Task,
         callbacks: Callbacks | None = None,
+        *,
+        force_lock: bool = False,
     ) -> TaskResult:
         """Single-task event-driven mode. No persist/entropy — caller manages state.
+
+        Acquires ``.harness/harness.lock`` for the duration of the run.
 
         Args:
             task: The task to execute.
             callbacks: Optional hook points.
+            force_lock: Override an existing lock file.
 
         Returns:
             TaskResult after dispatch and verification.
+
+        Raises:
+            HarnessAlreadyRunning: If another instance holds the lock.
         """
+        lock_info = acquire_lock(self.project_root, force=force_lock)
+        try:
+            return await self._run_once_inner(task, callbacks)
+        finally:
+            release_lock(self.project_root, lock_info)
+
+    async def _run_once_inner(
+        self,
+        task: Task,
+        callbacks: Callbacks | None = None,
+    ) -> TaskResult:
+        """Inner implementation for ``run_once()``."""
         cb = callbacks or Callbacks()
 
         # PROVISION
@@ -500,10 +665,13 @@ class Harness:
             return TaskResult(task_id=task.id, status="constraint_violation")
 
         # WRITE_CONFIG
-        self._write_constraint_config(pre_results)
+        self.write_constraints(results=pre_results)
 
         # DISPATCH
         result = await self.dispatch(task)
+
+        # HARVEST
+        result = self.harvest(result, self.project_root)
 
         # CHECK_POST
         post_results = self.check_constraints()
@@ -528,19 +696,33 @@ class Harness:
     def run_sync(
         self,
         max_epochs: int = 1,
+        max_retries: int = 3,
         stop_when: Callable[[EpochState], bool] = all_tasks_done,
         callbacks: Callbacks | None = None,
+        *,
+        force_lock: bool = False,
     ) -> EpochState:
         """Synchronous convenience wrapper around ``run()``.
 
         Args:
             max_epochs: Maximum number of epochs.
+            max_retries: Maximum retries per task on RETRY action.
             stop_when: Stop predicate.
             callbacks: Optional hook points.
+            force_lock: Override an existing lock file.
 
         Returns:
             Final EpochState.
+
+        Raises:
+            HarnessAlreadyRunning: If another instance holds the lock.
         """
         return asyncio.run(
-            self.run(max_epochs=max_epochs, stop_when=stop_when, callbacks=callbacks)
+            self.run(
+                max_epochs=max_epochs,
+                max_retries=max_retries,
+                stop_when=stop_when,
+                callbacks=callbacks,
+                force_lock=force_lock,
+            )
         )

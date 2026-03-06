@@ -311,6 +311,28 @@ class TestVerify:
         assert h.verify(TaskResult(task_id="t1", status="success")) == []
 
 
+class TestHarvest:
+    def test_default_passthrough(self, tmp_path):
+        h = _harness(tmp_path)
+        tr = TaskResult(task_id="t1", status="success")
+        assert h.harvest(tr, tmp_path) is tr
+
+    def test_subclass_can_modify_result(self, tmp_path):
+        class CustomHarness(Harness):
+            def harvest(self, result, project_root):
+                result.metadata["harvested"] = True
+                return result
+
+        h = CustomHarness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=MockTaskSource([_task()]),
+        )
+        tr = TaskResult(task_id="t1", status="success")
+        out = h.harvest(tr, tmp_path)
+        assert out.metadata["harvested"] is True
+
+
 class TestPersist:
     def test_writes_state_file(self, tmp_path):
         h = _harness(tmp_path)
@@ -348,14 +370,14 @@ class TestScanEntropy:
         assert h.scan_entropy() == []
 
 
-class TestWriteConstraintConfig:
+class TestWriteConstraints:
     def test_writes_merged_metadata(self, tmp_path):
         h = _harness(tmp_path)
         results = [
             VerifyResult(passed=True, metadata={"allowed_tools": ["bash", "read"]}),
             VerifyResult(passed=True, metadata={"allowed_tools": ["bash", "write"]}),
         ]
-        h._write_constraint_config(results)
+        h.write_constraints(results=results)
         path = tmp_path / HARNESS_DIR / "constraints.json"
         data = json.loads(path.read_text())
         assert data["allowed_tools"] == ["bash"]
@@ -366,8 +388,23 @@ class TestWriteConstraintConfig:
         constraints_path = harness_dir / "constraints.json"
         constraints_path.write_text("{}")
         h = _harness(tmp_path)
-        h._write_constraint_config([VerifyResult(passed=True)])
+        h.write_constraints(results=[VerifyResult(passed=True)])
         assert not constraints_path.exists()
+
+    def test_callable_with_project_root(self, tmp_path):
+        h = _harness(tmp_path)
+        h.write_constraints(tmp_path)
+        # No constraints configured → no file written, no error
+
+    def test_auto_checks_constraints_when_no_results(self, tmp_path):
+        constraint = MockConstraint(
+            VerifyResult(passed=True, metadata={"max_iterations": 5})
+        )
+        h = _harness(tmp_path, constraints=[constraint])
+        h.write_constraints()
+        path = tmp_path / HARNESS_DIR / "constraints.json"
+        data = json.loads(path.read_text())
+        assert data["max_iterations"] == 5
 
 
 # ─── run() happy path ────────────────────────────────────────
@@ -565,6 +602,60 @@ class TestRunCallbacks:
         assert len(state.completed_tasks) == 1
 
 
+# ─── run() entropy persistence ────────────────────────────────
+
+
+class TestRunEntropyPersistence:
+    async def test_entropy_tasks_persisted(self, tmp_path):
+        """Entropy tasks are written to .harness/entropy/ when enabled."""
+        ed = MockEntropyDetector(tasks=[_task("e1"), _task("e2")])
+        h = _harness(tmp_path, entropy_detectors=[ed], inject_entropy_tasks=True)
+        await h.run(max_epochs=1)
+        entropy_dir = tmp_path / HARNESS_DIR / "entropy"
+        partitions = list(entropy_dir.glob("tasks_*.json"))
+        assert len(partitions) == 1
+        data = json.loads(partitions[0].read_text())
+        ids = [t["id"] for t in data["tasks"]]
+        assert "e1" in ids
+        assert "e2" in ids
+
+    async def test_entropy_tasks_not_persisted_when_disabled(self, tmp_path):
+        """When inject_entropy_tasks=False, nothing is written."""
+        ed = MockEntropyDetector(tasks=[_task("e1")])
+        h = _harness(tmp_path, entropy_detectors=[ed], inject_entropy_tasks=False)
+        await h.run(max_epochs=1)
+        entropy_dir = tmp_path / HARNESS_DIR / "entropy"
+        assert not entropy_dir.exists()
+
+    async def test_no_write_when_no_entropy_tasks(self, tmp_path):
+        """Empty scan results produce no partition files."""
+        ed = MockEntropyDetector(tasks=[])
+        h = _harness(tmp_path, entropy_detectors=[ed], inject_entropy_tasks=True)
+        await h.run(max_epochs=1)
+        entropy_dir = tmp_path / HARNESS_DIR / "entropy"
+        assert not entropy_dir.exists()
+
+    async def test_entropy_persisted_before_halt(self, tmp_path):
+        """Entropy tasks are persisted even when on_entropy_scan returns HALT."""
+        ed = MockEntropyDetector(tasks=[_task("e1")])
+        h = _harness(
+            tmp_path,
+            tasks=[_task("t1"), _task("t2")],
+            entropy_detectors=[ed],
+            inject_entropy_tasks=True,
+        )
+        cb = Callbacks(on_entropy_scan=lambda ts: Action.HALT)
+        await h.run(max_epochs=5, callbacks=cb, stop_when=lambda s: False)
+        entropy_dir = tmp_path / HARNESS_DIR / "entropy"
+        # HALT happens before persistence, so no files written
+        assert not entropy_dir.exists()
+
+    async def test_inject_entropy_tasks_default_true(self, tmp_path):
+        """Default value of inject_entropy_tasks is True."""
+        h = _harness(tmp_path)
+        assert h.inject_entropy_tasks is True
+
+
 # ─── run() constraint gate ───────────────────────────────────
 
 
@@ -605,18 +696,25 @@ class TestRunVerification:
         await h.run(max_epochs=1)
         assert ts.completed[0][1].status == "verified"
 
-    async def test_any_fail_sets_verification_failed(self, tmp_path):
+    async def test_any_fail_retries_then_halts(self, tmp_path):
+        """RETRY verifier causes retries; mark_complete never called."""
         ts = MockTaskSource([_task("t1")])
+        backend = MockBackend()
         v_pass = MockVerifier(VerifyResult(passed=True))
         v_fail = MockVerifier(VerifyResult(passed=False, action=VerifyAction.RETRY))
         h = Harness(
             project_root=tmp_path,
-            backend=MockBackend(),
+            backend=backend,
             task_source=ts,
             verifiers=[v_pass, v_fail],
         )
-        await h.run(max_epochs=1)
-        assert ts.completed[0][1].status == "verification_failed"
+        state = await h.run(max_epochs=1, max_retries=2)
+        # Dispatched 1 + 2 retries = 3 times
+        assert len(backend.calls) == 3
+        # Never marked complete
+        assert ts.completed == []
+        assert state.halted is True
+        assert state.halt_reason == "max_retries_exhausted"
 
     async def test_no_verifiers_preserves_status(self, tmp_path):
         ts = MockTaskSource([_task("t1")])
@@ -692,6 +790,90 @@ class TestRunOnce:
         )
         await h.run_once(_task("t1"))
         assert not (tmp_path / HARNESS_DIR / "state.json").exists()
+
+
+# ─── harvest() in loops ──────────────────────────────────────
+
+
+class TestHarvestInRun:
+    async def test_harvest_called_in_run(self, tmp_path):
+        """harvest() is called between dispatch and verify in run()."""
+        call_order = []
+
+        class OrderBackend:
+            async def execute(self, root):
+                call_order.append("dispatch")
+                return TaskResult(task_id="t1", status="success")
+
+        class OrderVerifier:
+            def verify(self, root, result):
+                call_order.append("verify")
+                return VerifyResult(passed=True)
+
+        class OrderHarness(Harness):
+            def harvest(self, result, project_root):
+                call_order.append("harvest")
+                return result
+
+        h = OrderHarness(
+            project_root=tmp_path,
+            backend=OrderBackend(),
+            task_source=MockTaskSource([_task("t1")]),
+            verifiers=[OrderVerifier()],
+        )
+        await h.run(max_epochs=1)
+        assert call_order == ["dispatch", "harvest", "verify"]
+
+    async def test_harvest_can_modify_result_in_run(self, tmp_path):
+        """harvest() modifications are visible to verify()."""
+        seen_status = []
+
+        class TrackingVerifier:
+            def verify(self, root, result):
+                seen_status.append(result.status)
+                return VerifyResult(passed=True)
+
+        class ModifyHarness(Harness):
+            def harvest(self, result, project_root):
+                result.status = "harvested"
+                return result
+
+        h = ModifyHarness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=MockTaskSource([_task("t1")]),
+            verifiers=[TrackingVerifier()],
+        )
+        await h.run(max_epochs=1)
+        assert seen_status == ["harvested"]
+
+    async def test_harvest_called_in_run_once(self, tmp_path):
+        """harvest() is called between dispatch and verify in run_once()."""
+        call_order = []
+
+        class OrderBackend:
+            async def execute(self, root):
+                call_order.append("dispatch")
+                return TaskResult(task_id="t1", status="success")
+
+        class OrderVerifier:
+            def verify(self, root, result):
+                call_order.append("verify")
+                return VerifyResult(passed=True)
+
+        class OrderHarness(Harness):
+            def harvest(self, result, project_root):
+                call_order.append("harvest")
+                return result
+
+        h = OrderHarness(
+            project_root=tmp_path,
+            backend=OrderBackend(),
+            task_source=MockTaskSource(),
+            verifiers=[OrderVerifier()],
+        )
+        await h.run_once(_task("t1"))
+        assert call_order == ["dispatch", "harvest", "verify"]
 
 
 # ─── run_sync() ──────────────────────────────────────────────
@@ -927,3 +1109,244 @@ class TestDispatchParallel:
         )
         await h.dispatch_parallel([_task("t1")], EpochState(epoch=1))
         assert task_files_seen == [(True, True)]
+
+
+# ─── VerifyAction routing ─────────────────────────────────
+
+
+class TestVerifyActionRouting:
+    async def test_accept_marks_complete(self, tmp_path):
+        """ACCEPT: task marked complete, added to completed_tasks."""
+        ts = MockTaskSource([_task("t1")])
+        v = MockVerifier(VerifyResult(passed=True, action=VerifyAction.ACCEPT))
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=ts,
+            verifiers=[v],
+        )
+        state = await h.run(max_epochs=1)
+        assert "t1" in state.completed_tasks
+        assert len(ts.completed) == 1
+        assert state.halted is False
+
+    async def test_retry_redispatches(self, tmp_path):
+        """RETRY: same task dispatched again."""
+        call_count = 0
+
+        class CountingBackend:
+            async def execute(self, root):
+                nonlocal call_count
+                call_count += 1
+                return TaskResult(task_id="t1", status="success")
+
+        v = MockVerifier(VerifyResult(passed=False, action=VerifyAction.RETRY))
+        ts = MockTaskSource([_task("t1")])
+        h = Harness(
+            project_root=tmp_path,
+            backend=CountingBackend(),
+            task_source=ts,
+            verifiers=[v],
+        )
+        state = await h.run(max_epochs=1, max_retries=3)
+        # 1 initial + 3 retries = 4 dispatches
+        assert call_count == 4
+        assert ts.completed == []
+        assert state.halted is True
+        assert state.halt_reason == "max_retries_exhausted"
+
+    async def test_retry_then_accept(self, tmp_path):
+        """RETRY followed by ACCEPT on second attempt."""
+        attempt = 0
+
+        class FlipVerifier:
+            def verify(self, root, result):
+                nonlocal attempt
+                attempt += 1
+                if attempt == 1:
+                    return VerifyResult(passed=False, action=VerifyAction.RETRY)
+                return VerifyResult(passed=True, action=VerifyAction.ACCEPT)
+
+        ts = MockTaskSource([_task("t1")])
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=ts,
+            verifiers=[FlipVerifier()],
+        )
+        state = await h.run(max_epochs=1, max_retries=3)
+        assert "t1" in state.completed_tasks
+        assert len(ts.completed) == 1
+        assert state.halted is False
+
+    async def test_block_halts_immediately(self, tmp_path):
+        """BLOCK: loop halts, task not marked complete."""
+        ts = MockTaskSource([_task("t1")])
+        v = MockVerifier(VerifyResult(passed=False, action=VerifyAction.BLOCK))
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=ts,
+            verifiers=[v],
+        )
+        state = await h.run(max_epochs=5)
+        assert state.halted is True
+        assert state.halt_reason == "blocked"
+        assert ts.completed == []
+        assert "t1" not in state.completed_tasks
+
+    async def test_escalate_halts_with_callback(self, tmp_path):
+        """ESCALATE: halts with distinct reason, callback invoked."""
+        escalation_args = []
+
+        def on_esc(task, results):
+            escalation_args.append((task.id, len(results)))
+
+        ts = MockTaskSource([_task("t1")])
+        v = MockVerifier(VerifyResult(passed=False, action=VerifyAction.ESCALATE))
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=ts,
+            verifiers=[v],
+        )
+        cb = Callbacks(on_escalation=on_esc)
+        state = await h.run(max_epochs=5, callbacks=cb)
+        assert state.halted is True
+        assert state.halt_reason == "escalation"
+        assert ts.completed == []
+        assert escalation_args == [("t1", 1)]
+
+    async def test_escalate_without_callback(self, tmp_path):
+        """ESCALATE: halts even without explicit on_escalation callback."""
+        ts = MockTaskSource([_task("t1")])
+        v = MockVerifier(VerifyResult(passed=False, action=VerifyAction.ESCALATE))
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=ts,
+            verifiers=[v],
+        )
+        state = await h.run(max_epochs=5)
+        assert state.halted is True
+        assert state.halt_reason == "escalation"
+
+    async def test_no_verifiers_defaults_to_accept(self, tmp_path):
+        """No verifiers → ACCEPT (backward compatible)."""
+        ts = MockTaskSource([_task("t1")])
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(TaskResult(task_id="t1", status="success")),
+            task_source=ts,
+        )
+        state = await h.run(max_epochs=1)
+        assert "t1" in state.completed_tasks
+        assert len(ts.completed) == 1
+        assert state.halted is False
+
+    async def test_backward_compat_passed_true_only(self, tmp_path):
+        """VerifyResult(passed=True) without explicit action → ACCEPT."""
+        ts = MockTaskSource([_task("t1")])
+        v = MockVerifier(VerifyResult(passed=True))
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=ts,
+            verifiers=[v],
+        )
+        state = await h.run(max_epochs=1)
+        assert "t1" in state.completed_tasks
+        assert state.halted is False
+
+    async def test_backward_compat_passed_false_only(self, tmp_path):
+        """VerifyResult(passed=False) without action → defaults to RETRY."""
+        ts = MockTaskSource([_task("t1")])
+        v = MockVerifier(VerifyResult(passed=False))
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=ts,
+            verifiers=[v],
+        )
+        state = await h.run(max_epochs=1, max_retries=1)
+        assert ts.completed == []
+        assert state.halted is True
+        assert state.halt_reason == "max_retries_exhausted"
+
+
+class TestResolveVerifyAction:
+    def test_empty_results(self):
+        assert Harness._resolve_verify_action([]) is VerifyAction.ACCEPT
+
+    def test_all_accept(self):
+        results = [
+            VerifyResult(passed=True, action=VerifyAction.ACCEPT),
+            VerifyResult(passed=True, action=VerifyAction.ACCEPT),
+        ]
+        assert Harness._resolve_verify_action(results) is VerifyAction.ACCEPT
+
+    def test_retry_wins_over_accept(self):
+        results = [
+            VerifyResult(passed=True, action=VerifyAction.ACCEPT),
+            VerifyResult(passed=False, action=VerifyAction.RETRY),
+        ]
+        assert Harness._resolve_verify_action(results) is VerifyAction.RETRY
+
+    def test_block_wins_over_retry(self):
+        results = [
+            VerifyResult(passed=False, action=VerifyAction.RETRY),
+            VerifyResult(passed=False, action=VerifyAction.BLOCK),
+        ]
+        assert Harness._resolve_verify_action(results) is VerifyAction.BLOCK
+
+    def test_block_wins_over_escalate(self):
+        results = [
+            VerifyResult(passed=False, action=VerifyAction.ESCALATE),
+            VerifyResult(passed=False, action=VerifyAction.BLOCK),
+        ]
+        assert Harness._resolve_verify_action(results) is VerifyAction.BLOCK
+
+    def test_escalate_wins_over_retry(self):
+        results = [
+            VerifyResult(passed=False, action=VerifyAction.RETRY),
+            VerifyResult(passed=False, action=VerifyAction.ESCALATE),
+        ]
+        assert Harness._resolve_verify_action(results) is VerifyAction.ESCALATE
+
+    def test_single_result(self):
+        result = VerifyResult(passed=False, action=VerifyAction.BLOCK)
+        assert Harness._resolve_verify_action([result]) is VerifyAction.BLOCK
+
+
+class TestVerifyActionHaltPersists:
+    async def test_block_persists_state(self, tmp_path):
+        """BLOCK persists halted state to .harness/state.json."""
+        v = MockVerifier(VerifyResult(passed=False, action=VerifyAction.BLOCK))
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=MockTaskSource([_task("t1")]),
+            verifiers=[v],
+        )
+        await h.run(max_epochs=1)
+        # State file should exist and reflect halted status
+        state_path = tmp_path / HARNESS_DIR / "state.json"
+        assert state_path.exists()
+        data = json.loads(state_path.read_text())
+        assert data["halted"] is True
+        assert data["halt_reason"] == "blocked"
+
+    async def test_retry_exhaustion_persists_state(self, tmp_path):
+        """Retry exhaustion persists halted state."""
+        v = MockVerifier(VerifyResult(passed=False, action=VerifyAction.RETRY))
+        h = Harness(
+            project_root=tmp_path,
+            backend=MockBackend(),
+            task_source=MockTaskSource([_task("t1")]),
+            verifiers=[v],
+        )
+        await h.run(max_epochs=1, max_retries=1)
+        state_path = tmp_path / HARNESS_DIR / "state.json"
+        data = json.loads(state_path.read_text())
+        assert data["halted"] is True
+        assert data["halt_reason"] == "max_retries_exhausted"

@@ -114,6 +114,8 @@ def write_state(project_root: Path, state: EpochState) -> None:
         "epoch": state.epoch,
         "completed_tasks": state.completed_tasks,
         "pending_tasks": state.pending_tasks,
+        "halted": state.halted,
+        "halt_reason": state.halt_reason,
         "metadata": state.metadata,
     }
     _atomic_write(harness_dir / STATE_FILE, data)
@@ -263,6 +265,8 @@ def read_state(project_root: Path) -> EpochState:
             epoch=data["epoch"],
             completed_tasks=data.get("completed_tasks", []),
             pending_tasks=data.get("pending_tasks", []),
+            halted=data.get("halted", False),
+            halt_reason=data.get("halt_reason", ""),
             metadata=data.get("metadata", {}),
         )
     except (KeyError, TypeError) as exc:

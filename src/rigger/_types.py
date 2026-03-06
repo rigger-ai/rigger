@@ -86,6 +86,8 @@ class EpochState:
     epoch: int = 0
     completed_tasks: list[str] = field(default_factory=list)
     pending_tasks: list[str] = field(default_factory=list)
+    halted: bool = False
+    halt_reason: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

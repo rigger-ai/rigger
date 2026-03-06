@@ -8,6 +8,9 @@ license = "Apache-2.0"
 authors = [{ name = "Ariel Arevalo", email = "ariel@rigger.ai" }]
 dependencies = [
     "claude-agent-sdk>=0.1.44",
+    "click>=8.1",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -17,6 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
+
+[project.scripts]
+rigger = "rigger.cli:main"
 
 [project.urls]
 Homepage = "https://rigger-ai.github.io/rigger/"
@@ -60,7 +66,14 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "D", "ANN", "S603", "S607", "PT019"]
 "src/rigger/backends/**/*.py" = ["S603", "S607"]
+"src/rigger/_registry.py" = ["ANN401"]
+"src/rigger/_config.py" = ["ANN401"]
+"src/rigger/constraints/**/*.py" = ["S603", "S607", "D107"]
+"src/rigger/state_stores/**/*.py" = ["D107"]
+"src/rigger/verifiers/**/*.py" = ["S603", "S607", "D107"]
+"src/rigger/entropy_detectors/**/*.py" = ["S602", "S603", "S607", "D107"]
 "src/rigger/workspace/**/*.py" = ["S603", "S607"]
+"src/rigger/__main__.py" = ["D"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["rigger"]

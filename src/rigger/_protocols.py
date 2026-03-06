@@ -140,6 +140,7 @@ class WorkspaceManager(Protocol):
     its own project_root without interfering with other agents.
 
     Implementations:
+    - IndependentBranchManager: branch-per-task, push as PR (DEFAULT)
     - GitWorktreeManager: git worktrees with sequential merge back
     - IndependentDirManager: directory copies (non-git)
 

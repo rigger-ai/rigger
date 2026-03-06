@@ -56,12 +56,17 @@ Every implementor MUST follow these validated decisions:
 ```
 src/rigger/
   __init__.py              # Public API re-exports
+  __main__.py              # python -m rigger support
+  cli.py                   # CLI entry point (rigger command)
   _types.py                # Task, TaskResult, EpochState, ProvisionResult, VerifyResult
   _protocols.py            # TaskSource, ContextSource, Verifier, Constraint, StateStore, EntropyDetector, AgentBackend
   _provisioner.py          # ContextProvisioner, CriticalSource
   _harness.py              # Harness class (run, run_once, run_sync, step methods, parallel dispatch)
   _merge.py                # Metadata merge algorithm (additive, restrictive, scalar-min)
   _schema.py               # .harness/ read/write utilities with atomic writes
+  _config.py               # YAML config loader (load_config, build_harness)
+  _lock.py                 # Lock file mechanism (harness_lock)
+  _registry.py             # Component registry (type name -> class)
   py.typed                 # PEP 561 marker
   backends/
     __init__.py

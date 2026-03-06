@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rigger Harness Configuration",
+  "description": "Schema for harness.yaml — declarative agent harness configuration.",
+  "type": "object",
+  "required": ["backend", "task_source"],
+  "additionalProperties": false,
+  "properties": {
+    "backend": {
+      "description": "AgentBackend configuration. Required.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Registry name of the backend implementation.",
+          "examples": ["claude_code"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "task_source": {
+      "description": "TaskSource configuration. Required.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Registry name of the task source implementation.",
+          "examples": ["file_list", "linear", "atomic_issue", "json_stories"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "context_sources": {
+      "description": "List of ContextSource configurations. Optional.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Registry name of the context source implementation.",
+            "examples": ["file_tree", "agents_md", "mcp_capability", "static_files"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "verifiers": {
+      "description": "List of Verifier configurations. Optional.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Registry name of the verifier implementation.",
+            "examples": ["test_suite", "lint", "ci_status", "ratchet"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "constraints": {
+      "description": "List of Constraint configurations. Optional.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Registry name of the constraint implementation.",
+            "examples": ["tool_allowlist", "branch_policy"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "state_store": {
+      "description": "StateStore configuration. Optional (defaults to harness_dir).",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Registry name of the state store implementation.",
+          "examples": ["harness_dir", "json_file"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "entropy_detectors": {
+      "description": "List of EntropyDetector configurations. Optional.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Registry name of the entropy detector implementation.",
+            "examples": ["shell_command", "doc_staleness"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "workspace": {
+      "description": "WorkspaceManager configuration. Optional.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Registry name of the workspace manager implementation.",
+          "examples": ["git_worktree", "independent_dir", "independent_branch"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "run": {
+      "description": "Loop control parameters. Optional.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_epochs": {
+          "type": "integer",
+          "default": 100,
+          "minimum": 1,
+          "description": "Maximum number of epochs to execute."
+        },
+        "max_retries": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 0,
+          "description": "Maximum retries per task on verification failure."
+        },
+        "stop_when": {
+          "type": "string",
+          "default": "all_tasks_done",
+          "enum": ["all_tasks_done", "max_epochs", "never"],
+          "description": "Condition that stops the loop early."
+        },
+        "inject_entropy_tasks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to inject entropy-detected tasks into the task source."
+        }
+      }
+    }
+  }
+}
