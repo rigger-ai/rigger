@@ -25,6 +25,8 @@ theme:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - CLI Reference: cli.md
+  - Built-in Components: built-in-components.md
   - Concepts: concepts.md
   - Guides:
     - Writing a Custom Backend: guides/custom-backend.md

@@ -61,6 +61,27 @@ wm = IndependentDirManager(prefix="rigger-")
 - CI environments without git
 - When branch management overhead is unwanted
 
+## IndependentBranchManager
+
+Creates isolated branches in the same repository without using `git worktree`. Useful when worktrees aren't available or when you want simpler branch-based isolation.
+
+```python
+from rigger import IndependentBranchManager
+
+wm = IndependentBranchManager()
+```
+
+**How it works:**
+
+1. **create()** — Creates a new branch from HEAD and checks it out in a copied directory
+2. **merge()** — Merges the branch back into the original branch
+3. **cleanup()** — Removes the temporary directory and deletes the branch
+
+**When to use:**
+
+- Environments where `git worktree` is unavailable
+- Simpler branch management without worktree bookkeeping
+
 ## Parallel Dispatch Integration
 
 To use parallel dispatch, pass a `WorkspaceManager` to the `Harness` constructor and call `dispatch_parallel()`:

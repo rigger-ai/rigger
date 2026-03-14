@@ -18,19 +18,76 @@ uv sync
 
 ## Your First Harness
 
-A Rigger harness needs at minimum a **backend** (the coding agent) and a **task source** (what to work on).
+### Option 1: Declarative (YAML + CLI)
 
-### 1. Define a TaskSource
+The fastest way to get started — no Python required.
 
-`TaskSource` is a protocol with two methods: `pending()` returns tasks in priority order, and `mark_complete()` updates task status.
+```bash
+rigger init
+```
+
+This creates a `harness.yaml`. Edit it:
+
+```yaml
+backend:
+  type: claude_code
+
+task_source:
+  type: file_list
+  path: tasks.txt
+
+verifiers:
+  - type: test_suite
+    command: ["python", "-m", "pytest", "--tb=short", "-q"]
+
+run:
+  max_epochs: 20
+  max_retries: 2
+  stop_when: all_tasks_done
+```
+
+Create a `tasks.txt` with one task per line, then run:
+
+```bash
+rigger
+```
+
+Or start from a template:
+
+```bash
+rigger init --template gsd
+```
+
+See [CLI Reference](cli.md) for all options and [Built-in Components](built-in-components.md) for all available types.
+
+### Option 2: Python API
+
+For programmatic control, use `Harness` directly:
+
+```python
+from pathlib import Path
+from rigger import Harness, ClaudeCodeBackend, FileListTaskSource, TestSuiteVerifier
+
+harness = Harness(
+    project_root=Path("my-project"),
+    backend=ClaudeCodeBackend(model="claude-sonnet-4-6"),
+    task_source=FileListTaskSource(path=Path("tasks.json")),
+    verifiers=[TestSuiteVerifier(command=["pytest"])],
+)
+
+state = harness.run_sync(max_epochs=10)
+print(f"Completed: {len(state.completed_tasks)} tasks in {state.epoch} epochs")
+```
+
+### Option 3: Custom Protocols
+
+Implement the protocols yourself for maximum flexibility:
 
 ```python
 from pathlib import Path
 from rigger import Task, TaskResult
 
-class FileTaskSource:
-    """Reads tasks from a JSON file."""
-
+class MyTaskSource:
     def __init__(self, tasks: list[Task]):
         self._tasks = list(tasks)
 
@@ -41,102 +98,101 @@ class FileTaskSource:
         self._tasks = [t for t in self._tasks if t.id != task_id]
 ```
 
-### 2. Create and run the Harness
-
-```python
-from rigger import Harness, ClaudeCodeBackend
-
-harness = Harness(
-    project_root=Path("my-project"),
-    backend=ClaudeCodeBackend(model="claude-sonnet-4-6"),
-    task_source=FileTaskSource([
-        Task(id="1", description="Set up the project structure"),
-        Task(id="2", description="Implement the data model"),
-    ]),
-)
-
-# Run through all tasks (one per epoch)
-state = harness.run_sync(max_epochs=10)
-print(f"Completed: {state.completed_tasks}")
-```
+Each dimension is a `typing.Protocol` — implement the methods, plug it in. See [Concepts](concepts.md) for the full protocol reference.
 
 ## Adding Verification
 
-Use `Verifier` to check agent output after each task:
+### YAML
+
+```yaml
+verifiers:
+  - type: test_suite
+    command: ["python", "-m", "pytest"]
+  - type: lint
+    command: ruff check .
+  - type: ratchet
+    metric: coverage
+    threshold: 80.0
+```
+
+### Python
 
 ```python
 from rigger import VerifyResult, TaskResult
 
-class TestVerifier:
-    """Runs the test suite and checks for failures."""
-
+class MyVerifier:
     def verify(self, project_root: Path, result: TaskResult) -> VerifyResult:
         import subprocess
         proc = subprocess.run(
-            ["uv", "run", "pytest"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
+            ["pytest"], cwd=project_root, capture_output=True, text=True,
         )
         return VerifyResult(
             passed=proc.returncode == 0,
             message="Tests passed" if proc.returncode == 0 else proc.stdout,
         )
-
-harness = Harness(
-    project_root=Path("my-project"),
-    backend=ClaudeCodeBackend(),
-    task_source=my_tasks,
-    verifiers=[TestVerifier()],
-)
 ```
 
 ## Adding Constraints
 
-Use `Constraint` to enforce invariants before and after agent execution:
+### YAML
+
+```yaml
+constraints:
+  - type: tool_allowlist
+    tools: [Read, Edit, Bash]
+  - type: branch_policy
+    pattern: "feature/*"
+```
+
+### Python
 
 ```python
 from rigger import VerifyResult
 
 class NoSecretFiles:
-    """Ensures no .env files are committed."""
-
     def check(self, project_root: Path) -> VerifyResult:
         env_files = list(project_root.rglob(".env*"))
         return VerifyResult(
             passed=len(env_files) == 0,
             message=f"Found {len(env_files)} .env files" if env_files else "",
         )
-
-harness = Harness(
-    project_root=Path("my-project"),
-    backend=ClaudeCodeBackend(),
-    task_source=my_tasks,
-    constraints=[NoSecretFiles()],
-)
 ```
 
 ## Adding Context
 
-Use `ContextSource` to prepare filesystem artifacts the agent can discover:
+### YAML
+
+```yaml
+context_sources:
+  - type: file_tree
+    root: src/
+  - type: agents_md
+  - type: static_files
+    paths:
+      - docs/architecture.md
+```
+
+### Python
 
 ```python
 from rigger import ProvisionResult
 
 class ProjectDocsSource:
-    """Ensures API documentation is available in the project."""
-
     def gather(self, project_root: Path) -> ProvisionResult:
         docs_dir = project_root / "docs"
         files = list(docs_dir.rglob("*.md")) if docs_dir.exists() else []
         return ProvisionResult(files=files, capabilities=["project-docs"])
+```
 
-harness = Harness(
-    project_root=Path("my-project"),
-    backend=ClaudeCodeBackend(),
-    task_source=my_tasks,
-    context_sources=[ProjectDocsSource()],
-)
+## Environment Variable Interpolation
+
+YAML config supports `${VAR}` syntax for environment variables:
+
+```yaml
+task_source:
+  type: linear
+  team_id: ${LINEAR_TEAM_ID}
+  api_key: ${LINEAR_API_KEY}
 ```
 
 ## Development Setup

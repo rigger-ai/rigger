@@ -6,45 +6,64 @@ Rigger lets you compose protocol-based plugins across 6 orthogonal dimensions �
 
 ## Features
 
+- **Declarative YAML config** — Define your harness in `harness.yaml`, run with `rigger`. No Python required.
+- **22 built-in components** — Ready-to-use implementations across all 6 dimensions
 - **6 dimension protocols** — Each aspect of harness behavior is a separate `typing.Protocol` that you implement and plug in
-- **Protocol-based extensibility** — Duck-typed interfaces with no class hierarchy to inherit from
+- **CLI** — `rigger run`, `rigger init`, `rigger status` for zero-code workflows
+- **Templates** — Start from pre-built templates (`gsd`, `openai`) or create your own
+- **Plugin discovery** — Third-party components auto-discovered via `importlib.metadata` entry points
 - **Canonical epoch loop** — `Harness.run()` orchestrates the full lifecycle, or use step methods for custom loops
 - **Async-native** — Built on `asyncio` for concurrent dispatch and long-running agent calls
-- **Parallel dispatch** — Run multiple agents in isolated workspaces with `GitWorktreeManager` or `IndependentDirManager`
+- **Parallel dispatch** — Run multiple agents in isolated workspaces with `GitWorktreeManager`, `IndependentDirManager`, or `IndependentBranchManager`
 - **`.harness/` bilateral protocol** — Versioned filesystem contract between harness and backend with atomic read/write
 
-## Quick Install
+## Quick Start
 
 ```bash
 pip install rigger
+rigger init
 ```
 
-## Minimal Example
+This generates a `harness.yaml` — edit it to configure your harness:
 
-```python
-from pathlib import Path
-from rigger import Harness, Task, TaskResult, ClaudeCodeBackend
+```yaml
+backend:
+  type: claude_code
 
-class MyTasks:
-    def __init__(self, tasks: list[Task]):
-        self._tasks = list(tasks)
+task_source:
+  type: file_list
+  path: tasks.txt
 
-    def pending(self, project_root: Path) -> list[Task]:
-        return self._tasks
+verifiers:
+  - type: test_suite
+    command: ["python", "-m", "pytest", "--tb=short", "-q"]
 
-    def mark_complete(self, task_id: str, result: TaskResult) -> None:
-        self._tasks = [t for t in self._tasks if t.id != task_id]
+run:
+  max_epochs: 20
+  max_retries: 2
+  stop_when: all_tasks_done
+```
 
-harness = Harness(
-    project_root=Path("my-project"),
-    backend=ClaudeCodeBackend(model="claude-sonnet-4-6"),
-    task_source=MyTasks([Task(id="1", description="Add input validation")]),
-)
-state = harness.run_sync(max_epochs=1)
+Then run:
+
+```bash
+rigger
+```
+
+### Templates
+
+Start from a pre-built template instead:
+
+```bash
+rigger init --template gsd        # minimal get-shit-done config
+rigger init --template openai     # multi-agent OpenAI-style harness
+rigger init --list-templates      # see all available templates
 ```
 
 ## Next Steps
 
 - [Getting Started](getting-started.md) — Installation and your first harness
+- [CLI Reference](cli.md) — All commands and options
+- [Built-in Components](built-in-components.md) — All 22 ready-to-use implementations
 - [Concepts](concepts.md) — Architecture, protocols, and design decisions
 - [API Reference](api/index.md) — Full API documentation

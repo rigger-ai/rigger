@@ -51,11 +51,23 @@ The `.harness/` directory is the coupling point between the Harness (loop contro
 
 All writes are atomic (temp file + `os.replace()`). All reads are resilient to missing files and malformed JSON. Schema versions use additive-only evolution with major-version compatibility checks.
 
-## Three Tiers of Flexibility
+## Four Tiers of Flexibility
 
-### Tier 1: `run()` — The Blessed Loop
+### Tier 1: YAML + CLI — Zero Python
 
-For most use cases, call `run()` (async) or `run_sync()` and let the framework handle everything:
+Define everything in `harness.yaml`, run with `rigger`. Covers all 22 built-in implementations with no Python code required.
+
+```bash
+rigger init              # generate starter config
+rigger                   # run the harness
+rigger status            # check progress
+```
+
+See [CLI Reference](cli.md) and [Built-in Components](built-in-components.md).
+
+### Tier 2: `run()` — The Blessed Loop
+
+For programmatic usage, call `run()` (async) or `run_sync()` and let the framework handle everything:
 
 ```python
 state = harness.run_sync(max_epochs=10, stop_when=all_tasks_done)
@@ -72,7 +84,7 @@ callbacks = Callbacks(
 state = await harness.run(max_epochs=10, callbacks=callbacks)
 ```
 
-### Tier 2: Step Methods — Custom Loops
+### Tier 3: Step Methods — Custom Loops
 
 For advanced control, compose step methods into your own loop:
 
@@ -86,7 +98,7 @@ verify_results = harness.verify(result)
 harness.persist(state)
 ```
 
-### Tier 3: Direct Protocol Usage
+### Tier 4: Direct Protocol Usage
 
 Instantiate protocol implementations directly for maximum control over individual dimensions.
 
@@ -141,10 +153,11 @@ results, halt = await harness.dispatch_parallel(
 
 Each task runs in an isolated workspace. Results are merged back sequentially (priority-coupled — earlier tasks in the batch merge first).
 
-Two implementations are provided:
+Three implementations are provided:
 
 - **`GitWorktreeManager`** — Uses `git worktree` for branch-based isolation with merge back
 - **`IndependentDirManager`** — Copies the project directory (no git required)
+- **`IndependentBranchManager`** — Branch-based isolation without worktrees (creates branches in the same repo)
 
 ## Key Design Decisions
 
