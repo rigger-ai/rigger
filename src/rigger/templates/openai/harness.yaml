@@ -1,0 +1,55 @@
+# Rigger template: OpenAI Harness Engineering
+#
+# Progressive disclosure context, multi-layer verification, branch
+# isolation, and entropy detection.  Based on the OpenAI Harness
+# Engineering patterns from the Rigger corpus.
+#
+# Getting started:
+#   1. Replace docs/design.md with your real design document.
+#   2. Replace docs/conventions.md with your project conventions.
+#   3. Edit tasks.json with your actual tasks.
+#   4. Run: rigger
+
+backend:
+  type: claude_code
+  model: claude-sonnet-4-6
+
+task_source:
+  type: file_list
+  path: tasks.json
+
+context_sources:
+  - type: agents_md
+    template: agents_template.md
+  - type: file_tree
+    root: docs/
+  - type: file_tree
+    root: src/
+    required: false
+
+verifiers:
+  - type: ratchet
+    steps:
+      - name: test
+        command: ["python", "-m", "pytest", "--tb=short", "-q"]
+      - name: lint
+        command: ["ruff", "check", "."]
+
+constraints:
+  - type: branch_policy
+    protected_branches: ["main", "master"]
+    required_prefix: "task/"
+
+entropy_detectors:
+  - type: doc_staleness
+    patterns: ["docs/**/*.md"]
+    max_age_days: 14
+
+workspace:
+  type: git_worktree
+
+run:
+  max_epochs: 50
+  max_retries: 3
+  stop_when: all_tasks_done
+  inject_entropy_tasks: true

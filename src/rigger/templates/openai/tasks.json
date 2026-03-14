@@ -1,0 +1,22 @@
+[
+  {
+    "id": "scaffold",
+    "description": "Set up the project structure: create src/ and tests/ directories, configure pyproject.toml with dependencies, and ensure pytest runs.",
+    "status": "pending"
+  },
+  {
+    "id": "implement",
+    "description": "Implement the core feature according to docs/design.md. Follow the conventions in docs/conventions.md.",
+    "status": "pending"
+  },
+  {
+    "id": "test",
+    "description": "Write comprehensive tests for the implemented feature. Aim for at least 80% coverage of the new code.",
+    "status": "pending"
+  },
+  {
+    "id": "ci",
+    "description": "Add a GitHub Actions CI workflow that runs pytest and ruff on every push and pull request.",
+    "status": "pending"
+  }
+]

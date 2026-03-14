@@ -143,6 +143,7 @@ class TestAll:
             "entropy_detectors",
             "state_stores",
             "task_sources",
+            "templates",
             "verifiers",
             "workspace",
         }

@@ -1,0 +1,24 @@
+# Rigger template: Get Shit Done
+#
+# Minimal config — tests as sole gate, no extras.  Ship fast.
+#
+# Getting started:
+#   1. Edit tasks.json with your actual tasks.
+#   2. Run: rigger
+
+backend:
+  type: claude_code
+
+task_source:
+  type: file_list
+  path: tasks.json
+
+verifiers:
+  - type: test_suite
+    command: ["python", "-m", "pytest", "--tb=short", "-q"]
+
+run:
+  max_epochs: 20
+  max_retries: 2
+  stop_when: all_tasks_done
+  inject_entropy_tasks: false

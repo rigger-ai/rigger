@@ -50,3 +50,5 @@ drafts/
 eval/
 
 uv.lock
+.claude/
+jobs/

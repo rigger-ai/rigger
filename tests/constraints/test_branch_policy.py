@@ -11,36 +11,42 @@ from rigger._types import VerifyAction
 from rigger.constraints.branch_policy import BranchPolicyConstraint
 
 
-@pytest.fixture
-def git_repo(tmp_path: Path) -> Path:
-    """Create a minimal git repo on a feature branch."""
+def _init_repo(tmp_path: Path, branch: str) -> Path:
+    """Create a minimal git repo on the given branch."""
     subprocess.run(
-        ["git", "init", "-b", "feature/test"],
+        ["git", "init", "-b", branch], cwd=tmp_path, capture_output=True, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@rigger.dev"],
         cwd=tmp_path,
         capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Rigger Test"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "commit", "--allow-empty", "-m", "init"],
         cwd=tmp_path,
         capture_output=True,
+        check=True,
     )
     return tmp_path
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Path:
+    """Create a minimal git repo on a feature branch."""
+    return _init_repo(tmp_path, "feature/test")
 
 
 @pytest.fixture
 def main_repo(tmp_path: Path) -> Path:
     """Create a minimal git repo on main branch."""
-    subprocess.run(
-        ["git", "init", "-b", "main"],
-        cwd=tmp_path,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "init"],
-        cwd=tmp_path,
-        capture_output=True,
-    )
-    return tmp_path
+    return _init_repo(tmp_path, "main")
 
 
 class TestProtectedBranch:
@@ -52,16 +58,7 @@ class TestProtectedBranch:
         assert "main" in result.message
 
     def test_blocks_custom_protected(self, tmp_path: Path):
-        subprocess.run(
-            ["git", "init", "-b", "release"],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "init"],
-            cwd=tmp_path,
-            capture_output=True,
-        )
+        _init_repo(tmp_path, "release")
         c = BranchPolicyConstraint(protected_branches=["release", "main"])
         result = c.check(tmp_path)
         assert result.passed is False

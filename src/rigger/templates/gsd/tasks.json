@@ -1,0 +1,17 @@
+[
+  {
+    "id": "scaffold",
+    "description": "Set up the project structure and ensure pytest runs with a passing placeholder test.",
+    "status": "pending"
+  },
+  {
+    "id": "implement",
+    "description": "Implement the core feature with tests.",
+    "status": "pending"
+  },
+  {
+    "id": "polish",
+    "description": "Add error handling, edge-case tests, and a README.",
+    "status": "pending"
+  }
+]
