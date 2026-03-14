@@ -16,30 +16,43 @@ Coding agents are powerful but unpredictable. Rigger gives you a structured way 
 
 ```bash
 pip install rigger
+rigger init
 ```
 
-```python
-from pathlib import Path
-from rigger import Harness, Task, TaskResult, ClaudeCodeBackend
+This generates a `harness.yaml` — edit it to configure your harness:
 
-# Implement a minimal TaskSource
-class MyTasks:
-    def __init__(self, tasks: list[Task]):
-        self._tasks = list(tasks)
+```yaml
+backend:
+  type: claude_code
 
-    def pending(self, project_root: Path) -> list[Task]:
-        return self._tasks
+task_source:
+  type: file_list
+  path: tasks.txt
 
-    def mark_complete(self, task_id: str, result: TaskResult) -> None:
-        self._tasks = [t for t in self._tasks if t.id != task_id]
+verifiers:
+  - type: test_suite
+    command: ["python", "-m", "pytest", "--tb=short", "-q"]
 
-# Wire up and run
-harness = Harness(
-    project_root=Path("my-project"),
-    backend=ClaudeCodeBackend(model="claude-sonnet-4-6"),
-    task_source=MyTasks([Task(id="1", description="Add input validation")]),
-)
-state = harness.run_sync(max_epochs=1)
+run:
+  max_epochs: 20
+  max_retries: 2
+  stop_when: all_tasks_done
+```
+
+Then run:
+
+```bash
+rigger
+```
+
+### Templates
+
+Start from a pre-built template instead:
+
+```bash
+rigger init --template gsd        # minimal get-shit-done config
+rigger init --template openai     # multi-agent OpenAI-style harness
+rigger init --list-templates      # see all available templates
 ```
 
 ## Key Concepts
@@ -57,6 +70,37 @@ Rigger decomposes harness behavior into 6 orthogonal dimensions:
 
 Each dimension is a `typing.Protocol` — implement the methods, plug it in.
 
+## Built-in Components
+
+22 implementations ship with the framework, all usable from YAML:
+
+| Dimension | Type Name | Class |
+|-----------|-----------|-------|
+| Task Source | `file_list` | `FileListTaskSource` |
+| Task Source | `json_stories` | `JsonStoriesTaskSource` |
+| Task Source | `linear` | `LinearTaskSource` |
+| Task Source | `atomic_issue` | `AtomicIssueTaskSource` |
+| Context Source | `file_tree` | `FileTreeContextSource` |
+| Context Source | `agents_md` | `AgentsMdContextSource` |
+| Context Source | `static_files` | `StaticFilesContextSource` |
+| Context Source | `mcp_capability` | `McpCapabilityContextSource` |
+| Verifier | `test_suite` | `TestSuiteVerifier` |
+| Verifier | `lint` | `LintVerifier` |
+| Verifier | `ci_status` | `CiStatusVerifier` |
+| Verifier | `ratchet` | `RatchetVerifier` |
+| Constraint | `tool_allowlist` | `ToolAllowlistConstraint` |
+| Constraint | `branch_policy` | `BranchPolicyConstraint` |
+| State Store | `json_file` | `JsonFileStateStore` |
+| State Store | `harness_dir` | `HarnessDirStateStore` |
+| Entropy Detector | `shell_command` | `ShellCommandEntropyDetector` |
+| Entropy Detector | `doc_staleness` | `DocStalenessEntropyDetector` |
+| Workspace | `git_worktree` | `GitWorktreeManager` |
+| Workspace | `independent_dir` | `IndependentDirManager` |
+| Workspace | `independent_branch` | `IndependentBranchManager` |
+| Backend | `claude_code` | `ClaudeCodeBackend` |
+
+Third-party plugins are discovered via `importlib.metadata` entry points under `rigger.<protocol>`.
+
 ## Architecture
 
 The core loop follows a deterministic phase sequence:
@@ -67,13 +111,28 @@ READ_STATE → SELECT_TASK → PROVISION → CHECK_PRE → DISPATCH → VERIFY �
 
 The `Harness` class orchestrates this loop. The agent (`AgentBackend`) is a black box that receives a `project_root` and navigates the filesystem using its own tools. Task assignments and context are communicated through the `.harness/` bilateral filesystem protocol.
 
-## Three Tiers of Flexibility
+## Four Tiers of Flexibility
 
-1. **`run()` / `run_sync()`** — The blessed canonical loop. Handles state, task selection, provisioning, dispatch, verification, and persistence automatically.
+1. **YAML + CLI** — Zero Python. Define everything in `harness.yaml`, run with `rigger`. Covers all 22 built-in implementations.
 
-2. **Step methods** — `load_state()`, `select_tasks()`, `provision()`, `dispatch()`, `verify()`, `persist()`. Build your own loop from composable steps (tf.GradientTape equivalent).
+2. **`run()` / `run_sync()`** — The blessed canonical loop. Handles state, task selection, provisioning, dispatch, verification, and persistence automatically.
 
-3. **Direct protocol usage** — Instantiate and call protocol implementations directly for maximum control.
+3. **Step methods** — `load_state()`, `select_tasks()`, `provision()`, `dispatch()`, `verify()`, `persist()`. Build your own loop from composable steps (tf.GradientTape equivalent).
+
+4. **Direct protocol usage** — Instantiate and call protocol implementations directly for maximum control.
+
+## CLI
+
+```bash
+rigger                          # run (default command)
+rigger run --config my.yaml     # explicit config path
+rigger run --dry-run            # validate config without executing
+rigger run --force              # override existing lock file
+rigger status                   # show current .harness/ state
+rigger init                     # generate starter harness.yaml
+rigger init --template gsd      # init from a built-in template
+rigger init --list-templates    # list available templates
+```
 
 ## Development
 

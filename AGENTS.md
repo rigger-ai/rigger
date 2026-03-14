@@ -64,17 +64,58 @@ src/rigger/
   _harness.py              # Harness class (run, run_once, run_sync, step methods, parallel dispatch)
   _merge.py                # Metadata merge algorithm (additive, restrictive, scalar-min)
   _schema.py               # .harness/ read/write utilities with atomic writes
-  _config.py               # YAML config loader (load_config, build_harness)
+  _config.py               # YAML config loader (load_config, build_harness) with env var interpolation
   _lock.py                 # Lock file mechanism (harness_lock)
-  _registry.py             # Component registry (type name -> class)
+  _registry.py             # Component registry (type name -> class, plugin discovery)
   py.typed                 # PEP 561 marker
   backends/
     __init__.py
-    claude_code.py          # ClaudeCodeBackend (Claude Code SDK wrapper)
+    claude_code.py          # ClaudeCodeBackend (Claude Agent SDK wrapper)
+  task_sources/
+    __init__.py
+    file_list.py            # FileListTaskSource
+    json_stories.py         # JsonStoriesTaskSource
+    linear.py               # LinearTaskSource
+    atomic_issue.py         # AtomicIssueTaskSource
+  context_sources/
+    __init__.py
+    file_tree.py            # FileTreeContextSource
+    agents_md.py            # AgentsMdContextSource
+    static_files.py         # StaticFilesContextSource
+    mcp_capability.py       # McpCapabilityContextSource
+  verifiers/
+    __init__.py
+    test_suite.py           # TestSuiteVerifier
+    lint.py                 # LintVerifier
+    ci_status.py            # CiStatusVerifier
+    ratchet.py              # RatchetVerifier
+  constraints/
+    __init__.py
+    tool_allowlist.py       # ToolAllowlistConstraint
+    branch_policy.py        # BranchPolicyConstraint
+  state_stores/
+    __init__.py
+    json_file.py            # JsonFileStateStore
+    harness_dir.py          # HarnessDirStateStore
+  entropy_detectors/
+    __init__.py
+    shell_command.py        # ShellCommandEntropyDetector
+    doc_staleness.py        # DocStalenessEntropyDetector
   workspace/
     __init__.py
     git_worktree.py         # GitWorktreeManager
     independent.py          # IndependentDirManager
+    independent_branch.py   # IndependentBranchManager
+  templates/
+    __init__.py             # list_templates(), copy_template()
+    gsd/                    # Minimal get-shit-done template
+    openai/                 # Multi-agent OpenAI-style template
+  harbor/                   # Optional Harbor integration
+    __init__.py
+    agent.py
+    backend.py
+    task_source.py
+    verifier.py
 ```
 
 Underscore-prefixed modules are internal. Public API is re-exported via `__init__.py`.

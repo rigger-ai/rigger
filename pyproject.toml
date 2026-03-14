@@ -1,6 +1,6 @@
 [project]
 name = "rigger"
-version = "0.0.1"
+version = "0.0.2"
 description = "A declarative agent harness framework"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -52,6 +52,9 @@ docs = [
     "mkdocs-gen-files>=0.5",
     "mkdocs-literate-nav>=0.6",
 ]
+harbor = [
+    "harbor>=0.1.45",
+]
 
 [tool.ruff]
 target-version = "py313"
@@ -74,6 +77,7 @@ convention = "google"
 "src/rigger/entropy_detectors/**/*.py" = ["S602", "S603", "S607", "D107"]
 "src/rigger/workspace/**/*.py" = ["S603", "S607"]
 "src/rigger/__main__.py" = ["D"]
+"src/rigger/harbor/**/*.py" = ["S105", "S310", "S603", "S607", "D107"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["rigger"]

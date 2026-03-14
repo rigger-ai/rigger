@@ -220,4 +220,4 @@ def test_init_overwrite_confirmed(runner, tmp_path):
 def test_version_flag(runner):
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == EXIT_OK
-    assert "0.0.1" in result.output
+    assert "0.0.2" in result.output

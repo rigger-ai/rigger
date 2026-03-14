@@ -215,7 +215,7 @@ _STARTER_YAML = """\
 
 backend:
   type: claude_code
-  # model: claude-sonnet-4-20250514
+  # model: claude-sonnet-4-6
   # setting_sources:
   #   - project
 
@@ -296,10 +296,56 @@ task_source:
     help="Output file path.",
     show_default=True,
 )
+@click.option(
+    "--template",
+    "-t",
+    "template_name",
+    default=None,
+    help="Copy a built-in template instead of the starter YAML.",
+)
+@click.option(
+    "--list-templates",
+    is_flag=True,
+    help="List available templates and exit.",
+)
 @click.pass_context
-def init_cmd(ctx: click.Context, output: str) -> None:
-    """Generate a starter harness.yaml with commented examples."""
+def init_cmd(
+    ctx: click.Context,
+    output: str,
+    template_name: str | None,
+    list_templates: bool,
+) -> None:
+    """Generate a starter harness.yaml or copy a built-in template."""
     _configure_logging(ctx.obj["verbose"])
+
+    from rigger.templates import copy_template
+    from rigger.templates import list_templates as _list_templates
+
+    if list_templates:
+        names = _list_templates()
+        if not names:
+            click.echo("No templates available.")
+        else:
+            click.echo("Available templates:")
+            for name in names:
+                click.echo(f"  {name}")
+        return
+
+    if template_name is not None:
+        dest = Path.cwd()
+        try:
+            created = copy_template(template_name, dest)
+        except KeyError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(EXIT_CONFIG_ERROR) from None
+
+        for rel in created:
+            click.echo(f"  {rel}")
+        click.echo(
+            f"Initialized from template '{template_name}'. "
+            "Edit the files, then run: rigger"
+        )
+        return
 
     path = Path(output)
     if path.exists():
