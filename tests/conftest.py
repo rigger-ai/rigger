@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.fixture()
+@pytest.fixture
 def git_project(tmp_path: Path) -> Path:
     """A tmp_path initialized as a git repo with an initial commit."""
     subprocess.run(
@@ -47,7 +47,7 @@ def git_project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.fixture()
+@pytest.fixture
 def task_file(git_project: Path) -> Path:
     """Creates tasks.json with 3 sample tasks in git_project, returns its path."""
     tasks = [
@@ -60,7 +60,7 @@ def task_file(git_project: Path) -> Path:
     return path
 
 
-@pytest.fixture()
+@pytest.fixture
 def stories_file(git_project: Path) -> Path:
     """Creates stories.json with 3 stories in PRD format, returns its path."""
     data = {
